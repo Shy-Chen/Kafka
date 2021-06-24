@@ -379,9 +379,13 @@ public class SubscriptionState {
     }
 
     private static class TopicPartitionState {
+        //上次消费的位置
         private Long position; // last consumed position
+        //上次提交的offset
         private OffsetAndMetadata committed;  // last committed position
+        //是否暂停poll
         private boolean paused;  // whether this partition has been paused by the user
+        //重置偏移量时使用的策略
         private OffsetResetStrategy resetStrategy;  // the strategy to use if the offset needs resetting
 
         public TopicPartitionState() {

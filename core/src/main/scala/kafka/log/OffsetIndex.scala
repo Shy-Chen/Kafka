@@ -53,7 +53,11 @@ import kafka.common.InvalidOffsetException
  * All external APIs translate from relative offsets to full offsets, so users of this class do not interact with the internal 
  * storage format.
  */
-class OffsetIndex(@volatile private[this] var _file: File, val baseOffset: Long, val maxIndexSize: Int = -1) extends Logging {
+class OffsetIndex(@volatile
+                  //对应底层磁盘文件 写入索引的文件
+                  private[this] var _file: File,
+                  val baseOffset: Long,
+                  val maxIndexSize: Int = -1) extends Logging {
   
   private val lock = new ReentrantLock
   

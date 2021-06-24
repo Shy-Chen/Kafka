@@ -43,13 +43,20 @@ import scala.collection.mutable.ArrayBuffer
  * @param isSlice Should the start and end parameters be used for slicing?
  */
 @nonthreadsafe
-class FileMessageSet private[kafka](@volatile var file: File,
+class FileMessageSet private[kafka](@volatile
+                                    //对应磁盘上的一个文件
+                                    var file: File,
+                                    //用于读写文件的channel
                                     private[log] val channel: FileChannel,
+                                    //日志文件切片的开始点
                                     private[log] val start: Int,
+                                    //日志文件切片的结束点
                                     private[log] val end: Int,
+                                    //是否为日志文件的切片
                                     isSlice: Boolean) extends MessageSet with Logging {
 
   /* the size of the message set in bytes */
+  //日志文件的大小
   private val _size =
     if(isSlice)
       new AtomicInteger(end - start) // don't check the file size if this is just a slice view
@@ -81,9 +88,13 @@ class FileMessageSet private[kafka](@volatile var file: File,
    */
   def this(file: File, fileAlreadyExists: Boolean, initFileSize: Int, preallocate: Boolean) =
       this(file,
+        //创建FileChannel
         channel = FileMessageSet.openChannel(file, mutable = true, fileAlreadyExists, initFileSize, preallocate),
+        //start 默认为0
         start = 0,
+        //end 默认为Int.MaxValue
         end = ( if ( !fileAlreadyExists && preallocate ) 0 else Int.MaxValue),
+        //isSlice 默认false
         isSlice = false)
 
   /**
@@ -109,6 +120,7 @@ class FileMessageSet private[kafka](@volatile var file: File,
    *
    * @return A sliced wrapper on this message set limited based on the given position and size
    */
+    //从指定的物理位置 指定读取大小 读取数据
   def read(position: Int, size: Int): FileMessageSet = {
     if(position < 0)
       throw new IllegalArgumentException("Invalid position: " + position)
@@ -126,25 +138,33 @@ class FileMessageSet private[kafka](@volatile var file: File,
    * @param targetOffset The offset to search for.
    * @param startingPosition The starting position in the file to begin searching from.
    */
+    //从指定的offset开始 遍历消息集 找到第一个大于等于该offset的消息
+    //该方法并不会解压消息
   def searchFor(targetOffset: Long, startingPosition: Int): OffsetPosition = {
     var position = startingPosition
+    //12byte length offset+size
     val buffer = ByteBuffer.allocate(MessageSet.LogOverhead)
     val size = sizeInBytes()
     while(position + MessageSet.LogOverhead < size) {
       buffer.rewind()
       channel.read(buffer, position)
+      //连12个字节都读取不到 直接抛异常
       if(buffer.hasRemaining)
         throw new IllegalStateException("Failed to read complete buffer for targetOffset %d startPosition %d in %s"
                                         .format(targetOffset, startingPosition, file.getAbsolutePath))
       buffer.rewind()
+      //消息集中的offset
       val offset = buffer.getLong()
-      if(offset >= targetOffset)
+      if(offset >= targetOffset) // 找到了
+        //position 文件中的物理位置
         return OffsetPosition(offset, position)
       val messageSize = buffer.getInt()
       if(messageSize < Message.MinMessageOverhead)
         throw new IllegalStateException("Invalid message size: " + messageSize)
+      //略过消息内容 进行下一次读取
       position += MessageSet.LogOverhead + messageSize
     }
+      //没找到
     null
   }
 
@@ -155,6 +175,7 @@ class FileMessageSet private[kafka](@volatile var file: File,
    * @param size The maximum number of bytes to write
    * @return The number of bytes actually written.
    */
+    //将此消息集中的消息写入指定的channel中
   def writeTo(destChannel: GatheringByteChannel, writePosition: Long, size: Int): Int = {
     // Ensure that the underlying size has not changed.
     val newSize = math.min(channel.size.toInt, end) - start
@@ -247,6 +268,8 @@ class FileMessageSet private[kafka](@volatile var file: File,
    * If we encounter a message larger than this we throw an InvalidMessageException.
    * @return The iterator.
    */
+    //浅层迭代消息集中的消息
+    //MessageAndOffset = offset + message
   def iterator(maxMessageSize: Int): Iterator[MessageAndOffset] = {
     new IteratorTemplate[MessageAndOffset] {
       var location = start
@@ -288,13 +311,17 @@ class FileMessageSet private[kafka](@volatile var file: File,
   /**
    * The number of bytes taken up by this file set
    */
+    //该消息集中已写入的字节数字
   def sizeInBytes(): Int = _size.get()
 
   /**
    * Append these messages to the message set
    */
+   //向消息集中追加消息 必须使用 ByteBufferMessageSet来追加
   def append(messages: ByteBufferMessageSet) {
+     //追加消息 返回写入的字节数
     val written = messages.writeFullyTo(channel)
+     //修改大小
     _size.getAndAdd(written)
   }
 
@@ -325,6 +352,7 @@ class FileMessageSet private[kafka](@volatile var file: File,
    * Delete this message set from the filesystem
    * @return True iff this message set was deleted.
    */
+    //删除消息集 删除日志文件
   def delete(): Boolean = {
     CoreUtils.swallow(channel.close())
     file.delete()
@@ -340,22 +368,27 @@ class FileMessageSet private[kafka](@volatile var file: File,
    * @param targetSize The size to truncate to. Must be between 0 and sizeInBytes.
    * @return The number of bytes truncated off
    */
+    //将日志文件 截断到指定的size
   def truncateTo(targetSize: Int): Int = {
     val originalSize = sizeInBytes
-    if(targetSize > originalSize || targetSize < 0)
+    if(targetSize > originalSize || targetSize < 0)//参数异常
       throw new KafkaException("Attempt to truncate log segment to " + targetSize + " bytes failed, " +
                                " size of this log segment is " + originalSize + " bytes.")
     if (targetSize < channel.size.toInt) {
+      //裁剪文件
       channel.truncate(targetSize)
+      //移动position
       channel.position(targetSize)
       _size.set(targetSize)
     }
+      //返回裁剪掉的字节数
     originalSize - targetSize
   }
 
   /**
    * Read from the underlying file into the buffer starting at the given position
    */
+    //将数据读到ByteBuffer中
   def readInto(buffer: ByteBuffer, relativePosition: Int): ByteBuffer = {
     channel.read(buffer, relativePosition + this.start)
     buffer.flip()
@@ -386,20 +419,22 @@ object FileMessageSet
    * @param preallocate Pre allocate file or not, gotten from configuration.
    */
   def openChannel(file: File, mutable: Boolean, fileAlreadyExists: Boolean = false, initFileSize: Int = 0, preallocate: Boolean = false): FileChannel = {
-    if (mutable) {
-      if (fileAlreadyExists)
+    if (mutable) {//是否可变 换句话说就是 是否是可写还是只读
+      if (fileAlreadyExists)//已经存在该文件
         new RandomAccessFile(file, "rw").getChannel()
       else {
-        if (preallocate) {
+        if (preallocate) {//预分配
           val randomAccessFile = new RandomAccessFile(file, "rw")
           randomAccessFile.setLength(initFileSize)
           randomAccessFile.getChannel()
         }
         else
+          //创建可读写的
           new RandomAccessFile(file, "rw").getChannel()
       }
     }
     else
+      //创建只读的
       new FileInputStream(file).getChannel()
   }
 }

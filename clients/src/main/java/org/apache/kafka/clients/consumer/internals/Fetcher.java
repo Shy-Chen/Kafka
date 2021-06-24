@@ -3,9 +3,9 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
@@ -75,19 +75,25 @@ public class Fetcher<K, V> {
 
     private final ConsumerNetworkClient client;
     private final Time time;
+    //最少收集字节数据才返回
     private final int minBytes;
+    //最多等待多久就返回数据
     private final int maxWaitMs;
+    //最大拉取字节
     private final int fetchSize;
     private final long retryBackoffMs;
+    //最大拉取消息数量
     private final int maxPollRecords;
     private final boolean checkCrcs;
     private final Metadata metadata;
     private final FetchManagerMetrics sensors;
     private final SubscriptionState subscriptions;
+    //Fetch的response会先转换成CompletedFetch在此处缓存
     private final List<CompletedFetch> completedFetches;
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
 
+    //CompletedFetch的解析结果
     private PartitionRecords<K, V> nextInLineRecords = null;
 
     public Fetcher(ConsumerNetworkClient client,
@@ -125,7 +131,7 @@ public class Fetcher<K, V> {
      * an in-flight fetch or pending fetch data.
      */
     public void sendFetches() {
-        for (Map.Entry<Node, FetchRequest> fetchEntry: createFetchRequests().entrySet()) {
+        for (Map.Entry<Node, FetchRequest> fetchEntry : createFetchRequests().entrySet()) {
             final FetchRequest request = fetchEntry.getValue();
             client.send(fetchEntry.getKey(), ApiKeys.FETCH, request)
                     .addListener(new RequestFutureListener<ClientResponse>() {
@@ -156,6 +162,7 @@ public class Fetcher<K, V> {
 
     /**
      * Lookup and set offsets for any partitions which are awaiting an explicit reset.
+     *
      * @param partitions the partitions to reset
      */
     public void resetOffsetsIfNeeded(Set<TopicPartition> partitions) {
@@ -168,6 +175,7 @@ public class Fetcher<K, V> {
 
     /**
      * Update the fetch positions for the provided partitions.
+     *
      * @param partitions the partitions to update positions for
      * @throws NoOffsetForPartitionException If no offset is stored for a given partition and no reset policy is available
      */
@@ -193,6 +201,7 @@ public class Fetcher<K, V> {
 
     /**
      * Get topic metadata for all topics in the cluster
+     *
      * @param timeout time for which getting topic metadata is attempted
      * @return The map of topics with their partition information
      */
@@ -279,6 +288,7 @@ public class Fetcher<K, V> {
 
     /**
      * Send Metadata Request to least loaded node in Kafka cluster asynchronously
+     *
      * @return A future that indicates result of sent metadata request
      */
     private RequestFuture<ClientResponse> sendMetadataRequest(MetadataRequest request) {
@@ -340,12 +350,12 @@ public class Fetcher<K, V> {
 
     /**
      * Return the fetched records, empty the record buffer and update the consumed position.
-     *
+     * <p>
      * NOTE: returning empty records guarantees the consumed position are NOT updated.
      *
      * @return The fetched records per partition
      * @throws OffsetOutOfRangeException If there is OffsetOutOfRange error in fetchResponse and
-     *         the defaultResetPolicy is NONE
+     *                                   the defaultResetPolicy is NONE
      */
     public Map<TopicPartition, List<ConsumerRecord<K, V>>> fetchedRecords() {
         if (this.subscriptions.partitionAssignmentNeeded()) {
@@ -421,7 +431,7 @@ public class Fetcher<K, V> {
      * Fetch a single offset before the given timestamp for the partition.
      *
      * @param topicPartition The partition that needs fetching offset.
-     * @param timestamp The timestamp for fetching offset.
+     * @param timestamp      The timestamp for fetching offset.
      * @return A response which can be polled to obtain the corresponding offset.
      */
     private RequestFuture<Long> sendListOffsetRequest(final TopicPartition topicPartition, long timestamp) {
@@ -450,6 +460,7 @@ public class Fetcher<K, V> {
 
     /**
      * Callback for the response of the list offset call above.
+     *
      * @param topicPartition The partition that was fetched
      * @param clientResponse The response from the server.
      */
@@ -638,10 +649,10 @@ public class Fetcher<K, V> {
             V value = valueBytes == null ? null : this.valueDeserializer.deserialize(partition.topic(), valueByteArray);
 
             return new ConsumerRecord<>(partition.topic(), partition.partition(), offset,
-                                        timestamp, timestampType, record.checksum(),
-                                        keyByteArray == null ? ConsumerRecord.NULL_SIZE : keyByteArray.length,
-                                        valueByteArray == null ? ConsumerRecord.NULL_SIZE : valueByteArray.length,
-                                        key, value);
+                    timestamp, timestampType, record.checksum(),
+                    keyByteArray == null ? ConsumerRecord.NULL_SIZE : keyByteArray.length,
+                    valueByteArray == null ? ConsumerRecord.NULL_SIZE : valueByteArray.length,
+                    key, value);
         } catch (RuntimeException e) {
             throw new SerializationException("Error deserializing key/value for partition " + partition +
                     " at offset " + logEntry.offset(), e);
@@ -759,47 +770,47 @@ public class Fetcher<K, V> {
 
             this.bytesFetched = metrics.sensor("bytes-fetched");
             this.bytesFetched.add(metrics.metricName("fetch-size-avg",
-                this.metricGrpName,
-                "The average number of bytes fetched per request"), new Avg());
+                    this.metricGrpName,
+                    "The average number of bytes fetched per request"), new Avg());
             this.bytesFetched.add(metrics.metricName("fetch-size-max",
-                this.metricGrpName,
-                "The maximum number of bytes fetched per request"), new Max());
+                    this.metricGrpName,
+                    "The maximum number of bytes fetched per request"), new Max());
             this.bytesFetched.add(metrics.metricName("bytes-consumed-rate",
-                this.metricGrpName,
-                "The average number of bytes consumed per second"), new Rate());
+                    this.metricGrpName,
+                    "The average number of bytes consumed per second"), new Rate());
 
             this.recordsFetched = metrics.sensor("records-fetched");
             this.recordsFetched.add(metrics.metricName("records-per-request-avg",
-                this.metricGrpName,
-                "The average number of records in each request"), new Avg());
+                    this.metricGrpName,
+                    "The average number of records in each request"), new Avg());
             this.recordsFetched.add(metrics.metricName("records-consumed-rate",
-                this.metricGrpName,
-                "The average number of records consumed per second"), new Rate());
+                    this.metricGrpName,
+                    "The average number of records consumed per second"), new Rate());
 
             this.fetchLatency = metrics.sensor("fetch-latency");
             this.fetchLatency.add(metrics.metricName("fetch-latency-avg",
-                this.metricGrpName,
-                "The average time taken for a fetch request."), new Avg());
+                    this.metricGrpName,
+                    "The average time taken for a fetch request."), new Avg());
             this.fetchLatency.add(metrics.metricName("fetch-latency-max",
-                this.metricGrpName,
-                "The max time taken for any fetch request."), new Max());
+                    this.metricGrpName,
+                    "The max time taken for any fetch request."), new Max());
             this.fetchLatency.add(metrics.metricName("fetch-rate",
-                this.metricGrpName,
-                "The number of fetch requests per second."), new Rate(new Count()));
+                    this.metricGrpName,
+                    "The number of fetch requests per second."), new Rate(new Count()));
 
             this.recordsFetchLag = metrics.sensor("records-lag");
             this.recordsFetchLag.add(metrics.metricName("records-lag-max",
-                this.metricGrpName,
-                "The maximum lag in terms of number of records for any partition in this window"), new Max());
+                    this.metricGrpName,
+                    "The maximum lag in terms of number of records for any partition in this window"), new Max());
 
             this.fetchThrottleTimeSensor = metrics.sensor("fetch-throttle-time");
             this.fetchThrottleTimeSensor.add(metrics.metricName("fetch-throttle-time-avg",
-                                                         this.metricGrpName,
-                                                         "The average throttle time in ms"), new Avg());
+                    this.metricGrpName,
+                    "The average throttle time in ms"), new Avg());
 
             this.fetchThrottleTimeSensor.add(metrics.metricName("fetch-throttle-time-max",
-                                                         this.metricGrpName,
-                                                         "The maximum throttle time in ms"), new Max());
+                    this.metricGrpName,
+                    "The maximum throttle time in ms"), new Max());
         }
 
         public void recordTopicFetchMetrics(String topic, int bytes, int records) {

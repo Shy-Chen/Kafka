@@ -79,10 +79,12 @@ class LogSegment(val log: FileMessageSet,
       trace("Inserting %d bytes at offset %d at position %d".format(messages.sizeInBytes, offset, log.sizeInBytes()))
       // append an entry to the index (if needed)
       if(bytesSinceLastIndexEntry > indexIntervalBytes) {
+        //写索引
         index.append(offset, log.sizeInBytes())
         this.bytesSinceLastIndexEntry = 0
       }
       // append the messages
+      //写日志
       log.append(messages)
       this.bytesSinceLastIndexEntry += messages.sizeInBytes
     }

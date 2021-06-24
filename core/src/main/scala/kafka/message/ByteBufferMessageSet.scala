@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -32,15 +32,18 @@ import scala.collection.mutable
 
 object ByteBufferMessageSet {
 
+  //将指定的message集合按照指定的压缩类型进行压缩
   private def create(offsetAssigner: OffsetAssigner,
                      compressionCodec: CompressionCodec,
                      wrapperMessageTimestamp: Option[Long],
                      timestampType: TimestampType,
                      messages: Message*): ByteBuffer = {
+    //messages为空
     if (messages.isEmpty)
       MessageSet.Empty.buffer
-    else if (compressionCodec == NoCompressionCodec) {
+    else if (compressionCodec == NoCompressionCodec) {//不压缩
       val buffer = ByteBuffer.allocate(MessageSet.messageSetSize(messages))
+      //为每个消息设置offset并写入buffer
       for (message <- messages) writeMessage(buffer, message, offsetAssigner.nextAbsoluteOffset())
       buffer.rewind()
       buffer
@@ -111,9 +114,9 @@ object ByteBufferMessageSet {
             innerMessageAndOffsets.add(readMessageFromStream(compressed))
         } catch {
           case eofe: EOFException =>
-            // we don't do anything at all here, because the finally
-            // will close the compressed input stream, and we simply
-            // want to return the innerMessageAndOffsets
+          // we don't do anything at all here, because the finally
+          // will close the compressed input stream, and we simply
+          // want to return the innerMessageAndOffsets
           case ioe: IOException =>
             throw new InvalidMessageException(s"Error while reading message from stream compressed with ${wrapperMessage.compressionCodec}", ioe)
         } finally {
@@ -149,7 +152,7 @@ object ByteBufferMessageSet {
       override def makeNext(): MessageAndOffset = {
         messageAndOffsets.pollFirst() match {
           case null => allDone()
-          case nextMessage@ MessageAndOffset(message, offset) =>
+          case nextMessage@MessageAndOffset(message, offset) =>
             if (wrapperMessage.magic > MagicValue_V0) {
               val relativeOffset = offset - lastInnerOffset
               val absoluteOffset = wrapperMessageOffset + relativeOffset
@@ -208,10 +211,10 @@ private class OffsetAssigner(offsets: Seq[Long]) {
  *
  * Message format v1 has the following changes:
  * - For non-compressed messages, timestamp and timestamp type attributes have been added. The offsets of
- *   the messages remain absolute offsets.
+ * the messages remain absolute offsets.
  * - For compressed messages, timestamp and timestamp type attributes have been added and inner offsets (IO) are used
- *   for inner messages of compressed messages (see offset calculation details below). The timestamp type
- *   attribute is only set in wrapper messages. Inner messages always have CreateTime as the timestamp type in attributes.
+ * for inner messages of compressed messages (see offset calculation details below). The timestamp type
+ * attribute is only set in wrapper messages. Inner messages always have CreateTime as the timestamp type in attributes.
  *
  * We set the timestamp in the following way:
  * For non-compressed messages: the timestamp and timestamp type message attributes are set and used.
@@ -220,12 +223,12 @@ private class OffsetAssigner(offsets: Seq[Long]) {
  * 2. Wrapper messages' timestamp is set to:
  *    - the max timestamp of inner messages if CreateTime is used
  *    - the current server time if wrapper message's timestamp = LogAppendTime.
- *      In this case the wrapper message timestamp is used and all the timestamps of inner messages are ignored.
+ * In this case the wrapper message timestamp is used and all the timestamps of inner messages are ignored.
  * 3. Inner messages' timestamp will be:
  *    - used when wrapper message's timestamp type is CreateTime
  *    - ignored when wrapper message's timestamp type is LogAppendTime
  * 4. Inner messages' timestamp type will always be ignored with one exception: producers must set the inner message
- *    timestamp type to CreateTime, otherwise the messages will be rejected by broker.
+ * timestamp type to CreateTime, otherwise the messages will be rejected by broker.
  *
  * Absolute offsets are calculated in the following way:
  * Ideally the conversion from relative offset(RO) to absolute offset(AO) should be:
@@ -241,14 +244,14 @@ private class OffsetAssigner(offsets: Seq[Long]) {
  * To solve this issue, we use the following solution:
  *
  * 1. When the producer creates a message set, it simply writes all the messages into a compressed message set with
- *    offset 0, 1, ... (inner offset).
+ * offset 0, 1, ... (inner offset).
  * 2. The broker will set the offset of the wrapper message to the absolute offset of the last message in the
- *    message set.
+ * message set.
  * 3. When a consumer sees the message set, it first decompresses the entire message set to find out the inner
- *    offset (IO) of the last inner message. Then it computes RO and AO of previous messages:
+ * offset (IO) of the last inner message. Then it computes RO and AO of previous messages:
  *
- *    RO = IO_of_a_message - IO_of_the_last_message
- *    AO = AO_Of_Last_Inner_Message + RO
+ * RO = IO_of_a_message - IO_of_the_last_message
+ * AO = AO_Of_Last_Inner_Message + RO
  *
  * 4. This solution works for compacted message sets as well.
  *
@@ -262,16 +265,16 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
                           timestampType: TimestampType,
                           messages: Message*) {
     this(ByteBufferMessageSet.create(OffsetAssigner(offsetCounter, messages.size), compressionCodec,
-      wrapperMessageTimestamp, timestampType, messages:_*))
+      wrapperMessageTimestamp, timestampType, messages: _*))
   }
 
   def this(compressionCodec: CompressionCodec, offsetCounter: LongRef, messages: Message*) {
-    this(compressionCodec, offsetCounter, None, TimestampType.CREATE_TIME, messages:_*)
+    this(compressionCodec, offsetCounter, None, TimestampType.CREATE_TIME, messages: _*)
   }
 
   def this(compressionCodec: CompressionCodec, offsetSeq: Seq[Long], messages: Message*) {
     this(ByteBufferMessageSet.create(new OffsetAssigner(offsetSeq), compressionCodec,
-      None, TimestampType.CREATE_TIME, messages:_*))
+      None, TimestampType.CREATE_TIME, messages: _*))
   }
 
   def this(compressionCodec: CompressionCodec, messages: Message*) {
@@ -297,15 +300,16 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
   def writeFullyTo(channel: GatheringByteChannel): Int = {
     buffer.mark()
     var written = 0
-    while (written < sizeInBytes)
+    while (written < sizeInBytes) //将全部消息写入指定channel中
       written += channel.write(buffer)
     buffer.reset()
+    //返回写入的字节数
     written
   }
 
   /** Write the messages in this set to the given channel starting at the given offset byte.
-    * Less than the complete amount may be written, but no more than maxSize can be. The number
-    * of bytes written is returned */
+   * Less than the complete amount may be written, but no more than maxSize can be. The number
+   * of bytes written is returned */
   def writeTo(channel: GatheringByteChannel, offset: Long, maxSize: Int): Int = {
     if (offset > Int.MaxValue)
       throw new IllegalArgumentException(s"offset should not be larger than Int.MaxValue: $offset")
@@ -344,11 +348,11 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
           return allDone()
         val offset = topIter.getLong()
         val size = topIter.getInt()
-        if(size < Message.MinMessageOverhead)
+        if (size < Message.MinMessageOverhead)
           throw new InvalidMessageException("Message found with corrupt size (" + size + ") in shallow iterator")
 
         // we have an incomplete message
-        if(topIter.remaining < size)
+        if (topIter.remaining < size)
           return allDone()
 
         // read the current message and check correctness
@@ -356,7 +360,7 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
         message.limit(size)
         topIter.position(topIter.position + size)
         val newMessage = new Message(message)
-        if(isShallow) {
+        if (isShallow) {
           new MessageAndOffset(newMessage, offset)
         } else {
           newMessage.compressionCodec match {
@@ -365,7 +369,7 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
               new MessageAndOffset(newMessage, offset)
             case _ =>
               innerIter = ByteBufferMessageSet.deepIterator(new MessageAndOffset(newMessage, offset))
-              if(!innerIter.hasNext)
+              if (!innerIter.hasNext)
                 innerIter = null
               makeNext()
           }
@@ -373,10 +377,10 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
       }
 
       override def makeNext(): MessageAndOffset = {
-        if(isShallow){
+        if (isShallow) {
           makeNextOuter
         } else {
-          if(innerDone())
+          if (innerDone())
             makeNextOuter
           else
             innerIter.next()
@@ -390,7 +394,7 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
    * Update the offsets for this message set and do further validation on messages including:
    * 1. Messages for compacted topics must have keys
    * 2. When magic value = 1, inner messages of a compressed message set must have monotonically increasing offsets
-   *    starting from 0.
+   * starting from 0.
    * 3. When magic value = 1, validate and maybe overwrite timestamps of messages.
    *
    * This method will convert the messages in the following scenarios:
@@ -402,26 +406,34 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
    *
    * Returns the message set and a boolean indicating whether the message sizes may have changed.
    */
-  private[kafka] def validateMessagesAndAssignOffsets(offsetCounter: LongRef,
-                                                      now: Long,
-                                                      sourceCodec: CompressionCodec,
-                                                      targetCodec: CompressionCodec,
-                                                      compactedTopic: Boolean = false,
-                                                      messageFormatVersion: Byte = Message.CurrentMagicValue,
-                                                      messageTimestampType: TimestampType,
-                                                      messageTimestampDiffMaxMs: Long): (ByteBufferMessageSet, Boolean) = {
-    if (sourceCodec == NoCompressionCodec && targetCodec == NoCompressionCodec) {
+  private[kafka] def validateMessagesAndAssignOffsets( //LEO
+                                                       offsetCounter: LongRef,
+                                                       now: Long,
+                                                       sourceCodec: CompressionCodec,
+                                                       targetCodec: CompressionCodec,
+                                                       compactedTopic: Boolean = false,
+                                                       messageFormatVersion: Byte = Message.CurrentMagicValue,
+                                                       messageTimestampType: TimestampType,
+                                                       messageTimestampDiffMaxMs: Long): (ByteBufferMessageSet, Boolean) = {
+
+    if (sourceCodec == NoCompressionCodec && targetCodec == NoCompressionCodec) { //处理未启用压缩的消息
       // check the magic value
+      //遍历当前messageSet (此处使用浅迭代因为未启用压缩) 检查每一个message的magic是否与指定的一致
       if (!isMagicValueInAllWrapperMessages(messageFormatVersion)) {
         // Message format conversion
+        //处理magic不一致的情况
         (convertNonCompressedMessages(offsetCounter, compactedTopic, now, messageTimestampType, messageTimestampDiffMaxMs,
           messageFormatVersion), true)
       } else {
         // Do in-place validation, offset assignment and maybe set timestamp
+        //处理magic一致的情况
+        //LEO在此处更新 每写入一条消息 更新LEO然后写入offset
         (validateNonCompressedMessagesAndAssignOffsetInPlace(offsetCounter, now, compactedTopic, messageTimestampType,
           messageTimestampDiffMaxMs), false)
       }
-    } else {
+    } else { //处理压缩的消息
+      // 对于压缩消息 必定会解压一次 最多会压缩一次或者不压缩
+
       // Deal with compressed messages
       // We cannot do in place assignment in one of the following situations:
       // 1. Source and target compression codec are different
@@ -430,13 +442,23 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
       // 4. Message format conversion is needed.
 
       // No in place assignment situation 1 and 2
+
+      //1.当前消息压缩编解码器和broker压缩编解码器不同
+      //2.由于需要覆盖偏移量，所以要使用的魔法值为0时
+      //3.当要使用的magic大于0时，但需要覆盖内部消息的某些字段
+      //4.消息格式需要转换
+
+      //标记当前messageSet是否可以直接使用 判断条件1、2
       var inPlaceAssignment = sourceCodec == targetCodec && messageFormatVersion > Message.MagicValue_V0
 
       var maxTimestamp = Message.NoTimestamp
       val expectedInnerOffset = new LongRef(0)
       val validatedMessages = new mutable.ArrayBuffer[Message]
+
+      //深层迭代
       this.internalIterator(isShallow = false).foreach { messageAndOffset =>
         val message = messageAndOffset.message
+        //检查消息key
         validateMessageKey(message, compactedTopic)
 
         if (message.magic > Message.MagicValue_V0 && messageFormatVersion > Message.MagicValue_V0) {
@@ -444,6 +466,7 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
           // Validate the timestamp
           validateTimestamp(message, now, messageTimestampType, messageTimestampDiffMaxMs)
           // Check if we need to overwrite offset
+          //条件3
           if (messageAndOffset.offset != expectedInnerOffset.getAndIncrement())
             inPlaceAssignment = false
           maxTimestamp = math.max(maxTimestamp, message.timestamp)
@@ -454,13 +477,15 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
             s"compression attribute set: $message")
 
         // No in place assignment situation 4
+        //条件4
         if (message.magic != messageFormatVersion)
           inPlaceAssignment = false
 
         validatedMessages += message.toFormatVersion(messageFormatVersion)
       }
 
-      if (!inPlaceAssignment) {
+
+      if (!inPlaceAssignment) { //不可复用
         // Cannot do in place assignment.
         val wrapperMessageTimestamp = {
           if (messageFormatVersion == Message.MagicValue_V0)
@@ -471,13 +496,16 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
             Some(now)
         }
 
+        //创建新的ByteBufferMessageSet 重新压缩
         (new ByteBufferMessageSet(compressionCodec = targetCodec,
-                                  offsetCounter = offsetCounter,
-                                  wrapperMessageTimestamp = wrapperMessageTimestamp,
-                                  timestampType = messageTimestampType,
-                                  messages = validatedMessages: _*), true)
-      } else {
+          offsetCounter = offsetCounter,
+          wrapperMessageTimestamp = wrapperMessageTimestamp,
+          timestampType = messageTimestampType,
+          messages = validatedMessages: _*), true)
+      } else { //可直接复用 可节省一次压缩的过程
         // Do not do re-compression but simply update the offset, timestamp and attributes field of the wrapper message.
+
+        //更新外层offset = 内部最后一条offset的绝对位置
         buffer.putLong(0, offsetCounter.addAndGet(validatedMessages.size) - 1)
         // validate the messages
         validatedMessages.foreach(_.ensureValid())
@@ -488,8 +516,8 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
         val timestamp = buffer.getLong(timestampOffset)
         val attributes = buffer.get(attributeOffset)
         if (messageTimestampType == TimestampType.CREATE_TIME && timestamp == maxTimestamp)
-          // We don't need to recompute crc if the timestamp is not updated.
-          crcUpdateNeeded = false
+        // We don't need to recompute crc if the timestamp is not updated.
+        crcUpdateNeeded = false
         else if (messageTimestampType == TimestampType.LOG_APPEND_TIME) {
           // Set timestamp type and timestamp
           buffer.putLong(timestampOffset, now)
@@ -549,6 +577,7 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
     buffer.mark()
     while (messagePosition < sizeInBytes - MessageSet.LogOverhead) {
       buffer.position(messagePosition)
+      //设置offset
       buffer.putLong(offsetCounter.getAndIncrement())
       val messageSize = buffer.getInt()
       val messageBuffer = buffer.slice()

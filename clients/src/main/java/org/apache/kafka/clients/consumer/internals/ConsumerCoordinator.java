@@ -3,9 +3,9 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- *
+ * <p>
  * http://www.apache.org/licenses/LICENSE-2.0
- *
+ * <p>
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
@@ -63,6 +63,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerCoordinator.class);
 
+    //消费者的组的消费分配策略
     private final List<PartitionAssignor> assignors;
     private final Metadata metadata;
     private final ConsumerCoordinatorMetrics sensors;
@@ -73,6 +74,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private final ConsumerInterceptors<?, ?> interceptors;
     private final boolean excludeInternalTopics;
 
+    //此处被添加监听器 只要元数据变化 就会更新此处的快照
     private MetadataSnapshot metadataSnapshot;
     private MetadataSnapshot assignmentSnapshot;
 
@@ -202,6 +204,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                                   ByteBuffer assignmentBuffer) {
         // if we were the assignor, then we need to make sure that there have been no metadata updates
         // since the rebalance begin. Otherwise, we won't rebalance again until the next metadata change
+
+        //元数据发生改变 需要再次重平衡
         if (assignmentSnapshot != null && !assignmentSnapshot.equals(metadataSnapshot)) {
             subscriptions.needReassignment();
             return;
@@ -244,10 +248,12 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     protected Map<String, ByteBuffer> performAssignment(String leaderId,
                                                         String assignmentStrategy,
                                                         Map<String, ByteBuffer> allSubscriptions) {
+        //获取broker选择的分区策略
         PartitionAssignor assignor = lookupAssignor(assignmentStrategy);
         if (assignor == null)
             throw new IllegalStateException("Coordinator selected invalid assignment protocol: " + assignmentStrategy);
 
+        //全部订阅的分区
         Set<String> allSubscribedTopics = new HashSet<>();
         Map<String, Subscription> subscriptions = new HashMap<>();
         for (Map.Entry<String, ByteBuffer> subscriptionEntry : allSubscriptions.entrySet()) {
@@ -264,11 +270,13 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // update metadata (if needed) and keep track of the metadata used for assignment so that
         // we can check after rebalance completion whether anything has changed
         client.ensureFreshMetadata();
+        //在重平衡开始时 记录最新的元数据快照
         assignmentSnapshot = metadataSnapshot;
 
         log.debug("Performing assignment for group {} using strategy {} with subscriptions {}",
                 groupId, assignor.name(), subscriptions);
 
+        //执行分区分配的策略 返回分配方案
         Map<String, Assignment> assignment = assignor.assign(metadata.fetch(), subscriptions);
 
         log.debug("Finished assignment for group {}: {}", groupId, assignment);
@@ -285,6 +293,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     @Override
     protected void onJoinPrepare(int generation, String memberId) {
         // commit offsets prior to rebalance if auto-commit enabled
+        //如果启用了自动提交，则在join前提交偏移量
+        //该方法阻塞直到提及成功 broker返回响应
         maybeAutoCommitOffsetsSync();
 
         // execute the user's callback before rebalance
@@ -328,6 +338,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     /**
      * Fetch the current committed offsets from the coordinator for a set of partitions.
+     *
      * @param partitions The partitions to fetch offsets for
      * @return A map from partition to the committed offset
      */
@@ -353,14 +364,15 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * Ensure that we have a valid partition assignment from the coordinator.
      */
     public void ensurePartitionAssignment() {
-        if (subscriptions.partitionsAutoAssigned()) {
+        if (subscriptions.partitionsAutoAssigned()) {//自动分配模式
             // Due to a race condition between the initial metadata fetch and the initial rebalance, we need to ensure that
             // the metadata is fresh before joining initially, and then request the metadata update. If metadata update arrives
             // while the rebalance is still pending (for example, when the join group is still inflight), then we will lose
             // track of the fact that we need to rebalance again to reflect the change to the topic subscription. Without
             // ensuring that the metadata is fresh, any metadata update that changes the topic subscriptions and arrives with a
             // rebalance in progress will essentially be ignored. See KAFKA-3949 for the complete description of the problem.
-            if (subscriptions.hasPatternSubscription())
+            if (subscriptions.hasPatternSubscription())//使用正则的自动分配模式
+                //阻塞等待集群元数据更新
                 client.ensureFreshMetadata();
 
             ensureActiveGroup();
@@ -434,10 +446,11 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     /**
      * Commit offsets synchronously. This method will retry until the commit completes successfully
      * or an unrecoverable error is encountered.
+     *
      * @param offsets The offsets to be committed
      * @throws org.apache.kafka.common.errors.AuthorizationException if the consumer is not authorized to the group
-     *             or to any of the specified partitions
-     * @throws CommitFailedException if an unrecoverable error occurs before the commit can be completed
+     *                                                               or to any of the specified partitions
+     * @throws CommitFailedException                                 if an unrecoverable error occurs before the commit can be completed
      */
     public void commitOffsetsSync(Map<TopicPartition, OffsetAndMetadata> offsets) {
         if (offsets.isEmpty())
@@ -551,6 +564,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         log.trace("Sending offset-commit request with {} to coordinator {} for group {}", offsets, coordinator, groupId);
 
         return client.send(coordinator, ApiKeys.OFFSET_COMMIT, req)
+                //
                 .compose(new OffsetCommitResponseHandler(offsets));
     }
 
@@ -721,24 +735,24 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
             this.commitLatency = metrics.sensor("commit-latency");
             this.commitLatency.add(metrics.metricName("commit-latency-avg",
-                this.metricGrpName,
-                "The average time taken for a commit request"), new Avg());
+                    this.metricGrpName,
+                    "The average time taken for a commit request"), new Avg());
             this.commitLatency.add(metrics.metricName("commit-latency-max",
-                this.metricGrpName,
-                "The max time taken for a commit request"), new Max());
+                    this.metricGrpName,
+                    "The max time taken for a commit request"), new Max());
             this.commitLatency.add(metrics.metricName("commit-rate",
-                this.metricGrpName,
-                "The number of commit calls per second"), new Rate(new Count()));
+                    this.metricGrpName,
+                    "The number of commit calls per second"), new Rate(new Count()));
 
             Measurable numParts =
-                new Measurable() {
-                    public double measure(MetricConfig config, long now) {
-                        return subscriptions.assignedPartitions().size();
-                    }
-                };
+                    new Measurable() {
+                        public double measure(MetricConfig config, long now) {
+                            return subscriptions.assignedPartitions().size();
+                        }
+                    };
             metrics.addMetric(metrics.metricName("assigned-partitions",
-                this.metricGrpName,
-                "The number of partitions currently assigned to this consumer"), numParts);
+                    this.metricGrpName,
+                    "The number of partitions currently assigned to this consumer"), numParts);
         }
     }
 

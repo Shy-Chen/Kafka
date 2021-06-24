@@ -20,9 +20,13 @@ package org.apache.kafka.common.protocol;
  * Identifiers for all the Kafka APIs
  */
 public enum ApiKeys {
+
+    //producer向broker生产消息请求
     PRODUCE(0, "Produce"),
     FETCH(1, "Fetch"),
     LIST_OFFSETS(2, "Offsets"),
+
+    //向broker拉取集群元数据请求
     METADATA(3, "Metadata"),
     LEADER_AND_ISR(4, "LeaderAndIsr"),
     STOP_REPLICA(5, "StopReplica"),
@@ -30,8 +34,13 @@ public enum ApiKeys {
     CONTROLLED_SHUTDOWN_KEY(7, "ControlledShutdown"),
     OFFSET_COMMIT(8, "OffsetCommit"),
     OFFSET_FETCH(9, "OffsetFetch"),
+
+    //寻找Coordinator请求
     GROUP_COORDINATOR(10, "GroupCoordinator"),
+    //向Coordinator发送加入请求
     JOIN_GROUP(11, "JoinGroup"),
+
+    //consumer向Coordinator发送心跳请求
     HEARTBEAT(12, "Heartbeat"),
     LEAVE_GROUP(13, "LeaveGroup"),
     SYNC_GROUP(14, "SyncGroup"),

@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
  * AbstractCoordinator implements group management for a single group member by interacting with
  * a designated Kafka broker (the coordinator). Group semantics are provided by extending this class.
  * See {@link ConsumerCoordinator} for example usage.
- *
+ * <p>
  * From a high level, Kafka's group management protocol consists of the following sequence of actions:
  *
  * <ol>
@@ -71,12 +71,11 @@ import java.util.concurrent.TimeUnit;
  *     <li>Group Stabilization: Each member receives the state assigned by the leader and begins
  *         processing.</li>
  * </ol>
- *
+ * <p>
  * To leverage this protocol, an implementation must define the format of metadata provided by each
  * member for group registration in {@link #metadata()} and the format of the state assignment provided
  * by the leader in {@link #performAssignment(String, String, Map)} and becomes available to members in
  * {@link #onJoinComplete(int, String, String, ByteBuffer)}.
- *
  */
 public abstract class AbstractCoordinator implements Closeable {
 
@@ -91,11 +90,16 @@ public abstract class AbstractCoordinator implements Closeable {
     protected final Time time;
     protected final long retryBackoffMs;
 
+    //是否需要执行 发送JoinGroupRequest前的准备操作
     private boolean needsJoinPrepare = true;
+    //是否重新发送JoinGroupRequest 为true表示可以重新发送JoinGroupRequest
     private boolean rejoinNeeded = true;
+    //记录coordinator所在broker
     protected Node coordinator;
+    //作为消费者组内的唯一id
     protected String memberId;
     protected String protocol;
+    //coordinator broker 分代信息
     protected int generation;
 
     private RequestFuture<Void> findCoordinatorFuture = null;
@@ -126,6 +130,7 @@ public abstract class AbstractCoordinator implements Closeable {
 
     /**
      * Unique identifier for the class of protocols implements (e.g. "consumer" or "connect").
+     *
      * @return Non-null protocol type name
      */
     protected abstract String protocolType();
@@ -137,6 +142,7 @@ public abstract class AbstractCoordinator implements Closeable {
      * preference into account when selecting the generation protocol (generally more preferred
      * protocols will be selected as long as all members support them and there is no disagreement
      * on the preference).
+     *
      * @return Non-empty map of supported protocols and metadata
      */
     protected abstract List<ProtocolMetadata> metadata();
@@ -144,15 +150,17 @@ public abstract class AbstractCoordinator implements Closeable {
     /**
      * Invoked prior to each group join or rejoin. This is typically used to perform any
      * cleanup from the previous generation (such as committing offsets for the consumer)
+     *
      * @param generation The previous generation or -1 if there was none
-     * @param memberId The identifier of this member in the previous group or "" if there was none
+     * @param memberId   The identifier of this member in the previous group or "" if there was none
      */
     protected abstract void onJoinPrepare(int generation, String memberId);
 
     /**
      * Perform assignment for the group. This is used by the leader to push state to all the members
      * of the group (e.g. to push partition assignments in the case of the new consumer)
-     * @param leaderId The id of the leader (which is this member)
+     *
+     * @param leaderId          The id of the leader (which is this member)
      * @param allMemberMetadata Metadata from all members of the group
      * @return A map from each member to their state assignment
      */
@@ -162,9 +170,10 @@ public abstract class AbstractCoordinator implements Closeable {
 
     /**
      * Invoked when a group member has successfully joined a group.
-     * @param generation The generation that was joined
-     * @param memberId The identifier for the local member in the group
-     * @param protocol The protocol selected by the coordinator
+     *
+     * @param generation       The generation that was joined
+     * @param memberId         The identifier for the local member in the group
+     * @param protocol         The protocol selected by the coordinator
      * @param memberAssignment The assignment propagated from the group leader
      */
     protected abstract void onJoinComplete(int generation,
@@ -214,6 +223,7 @@ public abstract class AbstractCoordinator implements Closeable {
 
     /**
      * Check whether the group should be rejoined (e.g. if metadata changes)
+     *
      * @return true if it should, false otherwise
      */
     protected boolean needRejoin() {
@@ -226,26 +236,37 @@ public abstract class AbstractCoordinator implements Closeable {
     public void ensureActiveGroup() {
         // always ensure that the coordinator is ready because we may have been disconnected
         // when sending heartbeats and does not necessarily require us to rejoin the group.
+
+        //确保coordinator节点信息已经获取完毕
+        //如果当前没有coordinator节点 向负载最低的broker发送请求 获取coordinator节点信息
+        //该方法直到获取到coordinator节点信息才会结束 否则一直阻塞等待
         ensureCoordinatorReady();
 
+        //如果此处为false 证明已经join过
+        //如果为true 则需要join
         if (!needRejoin())
             return;
 
-        if (needsJoinPrepare) {
+        if (needsJoinPrepare) {//发送join前是否需要准备
+            //执行发送前准备逻辑
             onJoinPrepare(generation, memberId);
+            //标记为false 已经准备过了
             needsJoinPrepare = false;
         }
 
         while (needRejoin()) {
+            //再次确保coordinator节点信息已经获取完毕
             ensureCoordinatorReady();
 
             // ensure that there are no pending requests to the coordinator. This is important
             // in particular to avoid resending a pending JoinGroup request.
+            //如果缓存中有未发送的请求 等待发送完毕 避免重复join
             if (client.pendingRequestCount(this.coordinator) > 0) {
                 client.awaitPendingRequests(this.coordinator);
                 continue;
             }
 
+            //发送join请求
             RequestFuture<ByteBuffer> future = sendJoinGroupRequest();
             future.addListener(new RequestFutureListener<ByteBuffer>() {
                 @Override
@@ -339,6 +360,7 @@ public abstract class AbstractCoordinator implements Closeable {
      * Join the group and return the assignment for the next generation. This function handles both
      * JoinGroup and SyncGroup, delegating to {@link #performAssignment(String, String, Map)} if
      * elected leader by the coordinator.
+     *
      * @return A request future which wraps the assignment returned from the group leader
      */
     private RequestFuture<ByteBuffer> sendJoinGroupRequest() {
@@ -484,6 +506,7 @@ public abstract class AbstractCoordinator implements Closeable {
     /**
      * Discover the current coordinator for the group. Sends a GroupMetadata request to
      * one of the brokers. The returned future should be polled to get the result of the request.
+     *
      * @return A request future which indicates the completion of the metadata request
      */
     private RequestFuture<Void> sendGroupCoordinatorRequest() {
@@ -543,6 +566,7 @@ public abstract class AbstractCoordinator implements Closeable {
 
     /**
      * Check if we know who the coordinator is and we have an active connection
+     *
      * @return true if the coordinator is unknown
      */
     public boolean coordinatorUnknown() {
@@ -601,7 +625,8 @@ public abstract class AbstractCoordinator implements Closeable {
 
         future.addListener(new RequestFutureListener<Void>() {
             @Override
-            public void onSuccess(Void value) {}
+            public void onSuccess(Void value) {
+            }
 
             @Override
             public void onFailure(RuntimeException e) {
@@ -722,11 +747,11 @@ public abstract class AbstractCoordinator implements Closeable {
 
             this.heartbeatLatency = metrics.sensor("heartbeat-latency");
             this.heartbeatLatency.add(metrics.metricName("heartbeat-response-time-max",
-                this.metricGrpName,
-                "The max time taken to receive a response to a heartbeat request"), new Max());
+                    this.metricGrpName,
+                    "The max time taken to receive a response to a heartbeat request"), new Max());
             this.heartbeatLatency.add(metrics.metricName("heartbeat-rate",
-                this.metricGrpName,
-                "The average number of heartbeats per second"), new Rate(new Count()));
+                    this.metricGrpName,
+                    "The average number of heartbeats per second"), new Rate(new Count()));
 
             this.joinLatency = metrics.sensor("join-latency");
             this.joinLatency.add(metrics.metricName("join-time-avg",
@@ -751,15 +776,15 @@ public abstract class AbstractCoordinator implements Closeable {
                     "The number of group syncs per second"), new Rate(new Count()));
 
             Measurable lastHeartbeat =
-                new Measurable() {
-                    public double measure(MetricConfig config, long now) {
-                        return TimeUnit.SECONDS.convert(now - heartbeat.lastHeartbeatSend(), TimeUnit.MILLISECONDS);
-                    }
-                };
+                    new Measurable() {
+                        public double measure(MetricConfig config, long now) {
+                            return TimeUnit.SECONDS.convert(now - heartbeat.lastHeartbeatSend(), TimeUnit.MILLISECONDS);
+                        }
+                    };
             metrics.addMetric(metrics.metricName("last-heartbeat-seconds-ago",
-                this.metricGrpName,
-                "The number of seconds since the last controller heartbeat"),
-                lastHeartbeat);
+                    this.metricGrpName,
+                    "The number of seconds since the last controller heartbeat"),
+                    lastHeartbeat);
         }
     }
 
