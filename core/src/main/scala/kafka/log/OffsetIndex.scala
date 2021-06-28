@@ -135,9 +135,11 @@ class OffsetIndex(@volatile
    * If the target offset is smaller than the least entry in the index (or the index is empty),
    * the pair (baseOffset, 0) is returned.
    */
+    //查找小于给定的targetOffset的最大offset对应的物理位置position
   def lookup(targetOffset: Long): OffsetPosition = {
     maybeLock(lock) {
       val idx = mmap.duplicate
+      //二分查找
       val slot = indexSlotFor(idx, targetOffset)
       if(slot == -1)
         OffsetPosition(baseOffset, 0)
@@ -211,6 +213,7 @@ class OffsetIndex(@volatile
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
       if (_entries == 0 || offset > _lastOffset) {
         debug("Adding index entry %d => %d to %s.".format(offset, position, _file.getName))
+        //写入相对offset
         mmap.putInt((offset - baseOffset).toInt)
         mmap.putInt(position)
         _entries += 1
@@ -231,6 +234,7 @@ class OffsetIndex(@volatile
   /**
    * Truncate the entire index, deleting all entries
    */
+    //清空索引
   def truncate() = truncateToEntries(0)
   
   /**

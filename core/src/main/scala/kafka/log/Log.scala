@@ -76,11 +76,13 @@ case class LogAppendInfo(var firstOffset: Long,
  *
  */
 @threadsafe
-class Log(val dir: File,
-          @volatile var config: LogConfig,
-          @volatile var recoveryPoint: Long = 0L,
-          scheduler: Scheduler,
-          time: Time = SystemTime) extends Logging with KafkaMetricsGroup {
+class Log( //log对应的磁盘目录
+           val dir: File,
+           @volatile var config: LogConfig,
+           //恢复的起始offset 该offset前的消息已经持久化到磁盘
+           @volatile var recoveryPoint: Long = 0L,
+           scheduler: Scheduler,
+           time: Time = SystemTime) extends Logging with KafkaMetricsGroup {
 
   import kafka.log.Log._
 
@@ -98,11 +100,14 @@ class Log(val dir: File,
   }
 
   /* the actual segments of the log */
+  //维护多个LogSegment对象
+  //key:baseOffset value:LogSegment
   private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
   loadSegments()
 
   /* Calculate the offset of the next message */
-  //LEO
+
+  //用于生产offset分配给消息
   @volatile var nextOffsetMetadata = new LogOffsetMetadata(activeSegment.nextOffset(), activeSegment.baseOffset, activeSegment.size.toInt)
 
   val topicAndPartition: TopicAndPartition = Log.parseTopicPartitionName(dir)
@@ -318,7 +323,7 @@ class Log(val dir: File,
    */
   def append(messages: ByteBufferMessageSet, assignOffsets: Boolean = true): LogAppendInfo = {
 
-    //验证ByteBufferMessageSet中的消息
+    //验证ByteBufferMessageSet中的消息 只对外层消息处理 此处不会解压消息
     //返回LogAppendInfo对象
     val appendInfo = analyzeAndValidateMessageSet(messages)
 
@@ -339,10 +344,11 @@ class Log(val dir: File,
           // assign offsets to the message set
           //LEO 从此值开始向后分配offset
           val offset = new LongRef(nextOffsetMetadata.messageOffset)
+          //记录第一条消息的offset
           appendInfo.firstOffset = offset.value
           val now = time.milliseconds
           val (validatedMessages, messageSizesMaybeChanged) = try {
-            //验证并为每一条消息分配offset 更新LEO
+            //验证并为每一条消息分配offset
             validMessages.validateMessagesAndAssignOffsets(offset,
               now,
               appendInfo.sourceCodec,
@@ -355,9 +361,11 @@ class Log(val dir: File,
             case e: IOException => throw new KafkaException("Error in validating messages while appending to log '%s'".format(name), e)
           }
           validMessages = validatedMessages
+          //记录最后一条消息的offset
           appendInfo.lastOffset = offset.value - 1
           if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME)
-            appendInfo.timestamp = now
+          //记录时间戳
+          appendInfo.timestamp = now
 
           // re-validate message sizes if there's a possibility that they have changed (due to re-compression or message
           // format conversion)
@@ -387,14 +395,17 @@ class Log(val dir: File,
         }
 
         // maybe roll the log if this segment is full
-        //获取activeSegment
+
+        //获取activeSegment 可能会创建新的segment
         val segment = maybeRoll(validMessages.sizeInBytes)
 
         // now append to the log
+
         //追加消息到activeSegment中
         segment.append(appendInfo.firstOffset, validMessages)
 
         // increment the log end offset
+
         //更新LEO
         updateLogEndOffset(appendInfo.lastOffset + 1)
 
@@ -402,9 +413,11 @@ class Log(val dir: File,
           .format(this.name, appendInfo.firstOffset, nextOffsetMetadata.messageOffset, validMessages))
 
         if (unflushedMessages >= config.flushInterval)
+
         //将LEO之前的message刷入磁盘并更新recoverPoint
         flush()
 
+        //返回信息
         appendInfo
       }
     } catch {
@@ -519,13 +532,17 @@ class Log(val dir: File,
    * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the base offset of the first segment.
    * @return The fetch data information including fetch starting offset metadata and messages read.
    */
+  //通过跳表 定位到要读取数据的起始segment中读取数据
   def read(startOffset: Long, maxLength: Int, maxOffset: Option[Long] = None): FetchDataInfo = {
     trace("Reading %d bytes from offset %d in log %s of length %d bytes".format(maxLength, startOffset, name, size))
 
     // Because we don't use lock for reading, the synchronization is a little bit tricky.
     // We create the local variables to avoid race conditions with updates to the log.
+    //当前LEO信息
     val currentNextOffsetMetadata = nextOffsetMetadata
+    //LEO
     val next = currentNextOffsetMetadata.messageOffset
+    //从LEO开始读取必然没有数据 直接返回
     if (startOffset == next)
       return FetchDataInfo(currentNextOffsetMetadata, MessageSet.Empty)
 
@@ -544,15 +561,16 @@ class Log(val dir: File,
       // cause OffsetOutOfRangeException. To solve that, we cap the reading up to exposed position instead of the log
       // end of the active segment.
       val maxPosition = {
-        if (entry == segments.lastEntry) {
+        if (entry == segments.lastEntry) { // 查找出得entry是activeSegment
+          //activeSegment的大小
           val exposedPos = nextOffsetMetadata.relativePositionInSegment.toLong
           // Check the segment again in case a new segment has just rolled out.
-          if (entry != segments.lastEntry)
+          if (entry != segments.lastEntry) //写线程并发了 当前已经不是active了
           // New log segment has rolled out, we can read up to the file end.
           entry.getValue.size
           else
           exposedPos
-        } else {
+        } else { //非active直接读取全部
           entry.getValue.size
         }
       }
@@ -707,12 +725,16 @@ class Log(val dir: File,
         fileAlreadyExists = false,
         initFileSize = initFileSize,
         preallocate = config.preallocate)
+      //加入跳表数据结构中记录
       val prev = addSegment(segment)
       if (prev != null)
         throw new KafkaException("Trying to roll a new log segment for topic partition %s with start offset %d while it already exists.".format(name, newOffset))
 
       // We need to update the segment base offset and append position data of the metadata when log rolls.
       // The next offset should not change.
+
+      //更新segmentBaseOffset和relativePositionInSegment
+      //不会更新LEO
       updateLogEndOffset(nextOffsetMetadata.messageOffset)
 
       // schedule an asynchronous flush of the old segment
@@ -741,15 +763,19 @@ class Log(val dir: File,
    *
    * @param offset The offset to flush up to (non-inclusive); the new recovery point
    */
+  //刷新recoveryPoint到LEO之间的消息到磁盘 并更新recoveryPoint
   def flush(offset: Long): Unit = {
     if (offset <= this.recoveryPoint)
       return
     debug("Flushing log '" + name + " up to offset " + offset + ", last flushed: " + lastFlushTime + " current time: " +
       time.milliseconds + " unflushed = " + unflushedMessages)
+    //找到recoveryPoint和offset之间的segment
     for (segment <- logSegments(this.recoveryPoint, offset))
+    //fsync强制刷入磁盘
       segment.flush()
     lock synchronized {
       if (offset > this.recoveryPoint) {
+        //更新recoveryPoint
         this.recoveryPoint = offset
         lastflushedTime.set(time.milliseconds)
       }
@@ -826,6 +852,7 @@ class Log(val dir: File,
   /**
    * The active segment that is currently taking appends
    */
+  //当前可写入的LogSegment 即最后一个
   def activeSegment = segments.lastEntry.getValue
 
   /**

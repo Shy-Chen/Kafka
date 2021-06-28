@@ -63,8 +63,10 @@ object ByteBufferMessageSet {
               throw new IllegalArgumentException("Messages in the message set must have same magic value")
             // Use inner offset if magic value is greater than 0
             if (magicAndTimestamp.magic > Message.MagicValue_V0)
+              //写入相对offset
               output.writeLong(offsetAssigner.toInnerOffset(offset))
             else
+              //写入绝对offset
               output.writeLong(offset)
             output.writeInt(message.size)
             output.write(message.buffer.array, message.buffer.arrayOffset, message.buffer.limit)
@@ -427,7 +429,7 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
       } else {
         // Do in-place validation, offset assignment and maybe set timestamp
         //处理magic一致的情况
-        //LEO在此处更新 每写入一条消息 更新LEO然后写入offset
+        //每写入一条消息 更新写入offset
         (validateNonCompressedMessagesAndAssignOffsetInPlace(offsetCounter, now, compactedTopic, messageTimestampType,
           messageTimestampDiffMaxMs), false)
       }
